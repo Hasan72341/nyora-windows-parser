@@ -1,16 +1,23 @@
 name: Flip source switch
-# Signs + publishes config.json (the remote master switch the app reads on launch).
-# Run from the Actions tab → "Run workflow" → choose enabled true/false.
+# Signs + publishes the remote master switch each app reads on launch.
+# Run from the Actions tab -> "Run workflow" -> pick platform + enabled.
+#   windows -> config.json          (payload has enabled + sources)
+#   android -> android-config.json  (payload has enabled)
 on:
   workflow_dispatch:
     inputs:
+      platform:
+        description: "Which app to flip"
+        type: choice
+        options: ["windows", "android"]
+        default: "windows"
       enabled:
         description: "Enable sources for all installed apps?"
         type: choice
         options: ["false", "true"]
         default: "false"
       sources:
-        description: 'Source ids (comma-separated) or * for all'
+        description: 'Windows only: source ids (comma-separated) or * for all'
         default: "*"
 
 permissions:
@@ -21,27 +28,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Sign + write config.json
+      - name: Sign + write config
         env:
           KEY: ${{ secrets.REPO_SIGNING_KEY }}
+          PLATFORM: ${{ inputs.platform }}
           ENABLED: ${{ inputs.enabled }}
           SOURCES: ${{ inputs.sources }}
         run: |
           set -euo pipefail
           printf '%s\n' "$KEY" > key.pem
-          SRC_JSON=$(python3 -c "import sys,json;print(json.dumps([s.strip() for s in sys.argv[1].split(',') if s.strip()]))" "$SOURCES")
-          printf '{"v":1,"enabled":%s,"sources":%s}' "$ENABLED" "$SRC_JSON" > payload.json
+          if [ "$PLATFORM" = "android" ]; then
+            OUT="android-config.json"
+            printf '{"v":1,"enabled":%s}' "$ENABLED" > payload.json
+          else
+            OUT="config.json"
+            SRC_JSON=$(python3 -c "import sys,json;print(json.dumps([s.strip() for s in sys.argv[1].split(',') if s.strip()]))" "$SOURCES")
+            printf '{"v":1,"enabled":%s,"sources":%s}' "$ENABLED" "$SRC_JSON" > payload.json
+          fi
           DATA=$(base64 -w0 payload.json)
           SIG=$(openssl pkeyutl -sign -inkey key.pem -rawin -in payload.json | base64 -w0)
-          printf '{"data":"%s","sig":"%s"}' "$DATA" "$SIG" > config.json
+          printf '{"data":"%s","sig":"%s"}' "$DATA" "$SIG" > "$OUT"
           rm -f key.pem payload.json
+          echo "$OUT -> $(cat "$OUT")"
           echo "payload: $(base64 -d <<< "$DATA")"
-          echo "config.json written."
       - name: Commit + push
         run: |
           git config user.name  "nyora-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add config.json
+          git add -A
           git diff --cached --quiet && { echo "no change"; exit 0; }
-          git commit -m "flip switch: enabled=${{ inputs.enabled }}"
+          git commit -m "flip ${{ inputs.platform }} switch: enabled=${{ inputs.enabled }}"
           git push
