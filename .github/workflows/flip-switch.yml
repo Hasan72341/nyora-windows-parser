@@ -1,6 +1,6 @@
 name: Flip source switch
-# Signs + publishes config.json (the remote master switch the Windows app reads on
-# launch). Run from the Actions tab -> "Run workflow" -> choose enabled true/false.
+# Signs config.json AND deploys it to GitHub Pages via Actions (not the legacy
+# Jekyll builder, which was getting stuck). Run from the Actions tab.
 # (The Android switch lives in its own repo: Hasan72341/nyora-android-switch.)
 on:
   workflow_dispatch:
@@ -17,13 +17,21 @@ on:
 permissions:
   contents: write
   pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
 
 jobs:
-  sign:
+  flip:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - name: Sign + write config.json
+      - name: Sign config.json
         env:
           KEY: ${{ secrets.REPO_SIGNING_KEY }}
           ENABLED: ${{ inputs.enabled }}
@@ -38,15 +46,15 @@ jobs:
           printf '{"data":"%s","sig":"%s"}' "$DATA" "$SIG" > config.json
           rm -f key.pem payload.json
           echo "payload: $(base64 -d <<< "$DATA")"
-      - name: Commit + push
+      - name: Commit to git (traceability)
         run: |
           git config user.name  "nyora-bot"
           git config user.email "bot@users.noreply.github.com"
           git add config.json
-          git diff --cached --quiet && { echo "no change"; exit 0; }
-          git commit -m "flip switch: enabled=${{ inputs.enabled }}"
-          git push
-      - name: Trigger Pages deploy
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh api -X POST "repos/${{ github.repository }}/pages/builds" || echo "pages build trigger skipped"
+          git diff --cached --quiet || { git commit -m "flip switch: enabled=${{ inputs.enabled }}"; git push; }
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deploy
+        uses: actions/deploy-pages@v4
