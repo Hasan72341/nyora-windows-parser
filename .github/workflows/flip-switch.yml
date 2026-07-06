@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: write
+  pages: write
 
 jobs:
   sign:
@@ -45,3 +46,7 @@ jobs:
           git diff --cached --quiet && { echo "no change"; exit 0; }
           git commit -m "flip switch: enabled=${{ inputs.enabled }}"
           git push
+      - name: Trigger Pages deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X POST "repos/${{ github.repository }}/pages/builds" || echo "pages build trigger skipped"
